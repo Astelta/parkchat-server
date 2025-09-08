@@ -37,8 +37,8 @@ Follow these instructions to get the server up and running on your local machine
 1.  **Clone the repository:**
 
     ```sh
-    git clone <your-repository-url>
-    cd <repository-folder>
+    git clone https://github.com/Astelta/parkchat-server.git
+    cd parkchat-server
     ```
 
 2.  **Install dependencies:**
