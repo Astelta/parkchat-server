@@ -18,59 +18,59 @@ import (
 
 var db *sql.DB
 
-// --- Struktury danych ---
+// --- Data Structures ---
 
-// User reprezentuje użytkownika w systemie
+// User represents a user in the system.
 type User struct {
 	ID           int
 	Nickname     string `json:"nickname"`
-	PasswordHash string `json:"-"` // Pomijamy w JSON
+	PasswordHash string `json:"-"` // Omitted in JSON
 }
 
-// Credentials służy do odczytywania danych logowania/rejestracji z requestu
+// Credentials is used to read login/registration data from the request.
 type Credentials struct {
 	Nickname string `json:"nickname"`
 	Password string `json:"password"`
 }
 
-// Message reprezentuje pojedynczą wiadomość w czacie
+// Message represents a single chat message.
 type Message struct {
 	ID        int       `json:"id"`
 	ChatRoom  string    `json:"chat_room"`
 	Nickname  string    `json:"nickname"`
 	Content   string    `json:"content"`
 	Timestamp time.Time `json:"timestamp"`
-	Type      string    `json:"type"` // "chat" albo "system"
+	Type      string    `json:"type"` // "chat" or "system"
 }
 
-// --- WebSocketowe struktury i globalne zmienne ---
+// --- WebSocket Structures and Global Variables ---
 
 var (
 	upgrader = websocket.Upgrader{
 		ReadBufferSize:  1024,
 		WriteBufferSize: 1024,
-		// Dopuszczamy połączenia z dowolnego źródła. W produkcyjnym środowisku należy to ograniczyć!
+		// We allow connections from any origin. In a production environment, this should be restricted!
 		CheckOrigin: func(r *http.Request) bool {
 			return true
 		},
 	}
-	// chats przechowuje aktywne połączenia dla każdego pokoju czatu
-	// Format: map[pokoj_czatu]map[*websocket.Conn]bool
+	// chats stores active connections for each chat room.
+	// Format: map[chat_room]map[*websocket.Conn]bool
 	chats = make(map[string]map[*websocket.Conn]bool)
-	// Mutex do zabezpieczenia dostępu do mapy `chats`
+	// Mutex to protect access to the `chats` map.
 	mu sync.Mutex
 )
 
-// --- Logika bazy danych ---
+// --- Database Logic ---
 
 func initDB() {
 	var err error
 	db, err = sql.Open("sqlite", "./chat.db")
 	if err != nil {
-		log.Fatal("Błąd połączenia z bazą danych:", err)
+		log.Fatal("Error connecting to the database:", err)
 	}
 
-	// Tabela użytkowników
+	// Users table
 	usersTable := `
     CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -79,10 +79,10 @@ func initDB() {
     );`
 	_, err = db.Exec(usersTable)
 	if err != nil {
-		log.Fatal("Błąd tworzenia tabeli users:", err)
+		log.Fatal("Error creating users table:", err)
 	}
 
-	// Tabela wiadomości
+	// Messages table
 	messagesTable := `
     CREATE TABLE IF NOT EXISTS messages (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -95,13 +95,13 @@ func initDB() {
     );`
 	_, err = db.Exec(messagesTable)
 	if err != nil {
-		log.Fatal("Błąd tworzenia tabeli messages:", err)
+		log.Fatal("Error creating messages table:", err)
 	}
 
-	log.Println("Baza danych SQLite zainicjowana pomyślnie.")
+	log.Println("SQLite database initialized successfully.")
 }
 
-// --- Funkcje pomocnicze związane z użytkownikami ---
+// --- User-related Helper Functions ---
 
 func hashPassword(password string) (string, error) {
 	bytes, err := bcrypt.GenerateFromPassword([]byte(password), 14)
@@ -122,30 +122,30 @@ func getUserByNickname(nickname string) (*User, error) {
 	return user, nil
 }
 
-// --- Handlery HTTP ---
+// --- HTTP Handlers ---
 
 func handleHistory(w http.ResponseWriter, r *http.Request) {
 	nickname, password, ok := r.BasicAuth()
 	if !ok {
-		http.Error(w, "Brak danych autoryzacyjnych", http.StatusUnauthorized)
+		http.Error(w, "Authorization data missing", http.StatusUnauthorized)
 		return
 	}
 
 	user, err := getUserByNickname(nickname)
 	if err != nil || !checkPasswordHash(password, user.PasswordHash) {
-		http.Error(w, "Nieprawidłowy nick lub hasło", http.StatusUnauthorized)
+		http.Error(w, "Invalid nickname or password", http.StatusUnauthorized)
 		return
 	}
 
 	roomName := strings.TrimPrefix(r.URL.Path, "/history/")
 	if roomName == "" {
-		http.Error(w, "Nie podano nazwy pokoju czatu", http.StatusBadRequest)
+		http.Error(w, "Chat room name not provided", http.StatusBadRequest)
 		return
 	}
 
 	rows, err := db.Query("SELECT nickname, content, timestamp FROM messages WHERE chat_room = ? ORDER BY timestamp ASC LIMIT 50", roomName)
 	if err != nil {
-		http.Error(w, "Błąd pobierania historii wiadomości", http.StatusInternalServerError)
+		http.Error(w, "Error fetching message history", http.StatusInternalServerError)
 		return
 	}
 	defer rows.Close()
@@ -154,7 +154,7 @@ func handleHistory(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var msg Message
 		if err := rows.Scan(&msg.Nickname, &msg.Content, &msg.Timestamp); err != nil {
-			http.Error(w, "Błąd odczytu wiadomości", http.StatusInternalServerError)
+			http.Error(w, "Error reading message", http.StatusInternalServerError)
 			return
 		}
 		messages = append(messages, msg)
@@ -166,71 +166,70 @@ func handleHistory(w http.ResponseWriter, r *http.Request) {
 
 func handleRegister(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "Niedozwolona metoda", http.StatusMethodNotAllowed)
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	log.Println("Odebrano POST /register")
+	log.Println("Received POST /register")
 
 	var creds Credentials
 	if err := json.NewDecoder(r.Body).Decode(&creds); err != nil {
-		http.Error(w, "Nieprawidłowy format danych", http.StatusBadRequest)
+		http.Error(w, "Invalid data format", http.StatusBadRequest)
 		return
 	}
 
 	if creds.Nickname == "" || creds.Password == "" {
-		http.Error(w, "Nick i hasło nie mogą być puste", http.StatusBadRequest)
+		http.Error(w, "Nickname and password cannot be empty", http.StatusBadRequest)
 		return
 	}
 
 	passwordHash, err := hashPassword(creds.Password)
 	if err != nil {
-		http.Error(w, "Błąd serwera podczas hashowania hasła", http.StatusInternalServerError)
+		http.Error(w, "Server error while hashing password", http.StatusInternalServerError)
 		return
 	}
 
 	_, err = db.Exec("INSERT INTO users (nickname, password_hash) VALUES (?, ?)", creds.Nickname, passwordHash)
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
-			http.Error(w, "Użytkownik o tym nicku już istnieje", http.StatusConflict)
+			http.Error(w, "User with this nickname already exists", http.StatusConflict)
 		} else {
-			http.Error(w, "Błąd serwera podczas tworzenia użytkownika", http.StatusInternalServerError)
+			http.Error(w, "Server error while creating user", http.StatusInternalServerError)
 		}
 		return
 	}
 
 	w.WriteHeader(http.StatusCreated)
-	fmt.Fprintf(w, "Użytkownik %s został pomyślnie zarejestrowany.", creds.Nickname)
+	fmt.Fprintf(w, "User %s has been successfully registered.", creds.Nickname)
 }
 
-// --- WebSocket Handlery ---
+// --- WebSocket Handlers ---
 
-// handleWebsocket odpowiada za obsługę połączeń WebSocket
-// handleWebsocket odpowiada za obsługę połączeń WebSocket
+// handleWebsocket is responsible for handling WebSocket connections.
 func handleWebsocket(w http.ResponseWriter, r *http.Request) {
 	nickname, password, ok := r.BasicAuth()
 	if !ok {
-		http.Error(w, "Brak danych autoryzacyjnych", http.StatusUnauthorized)
+		http.Error(w, "Authorization data missing", http.StatusUnauthorized)
 		return
 	}
 
 	user, err := getUserByNickname(nickname)
 	if err != nil || !checkPasswordHash(password, user.PasswordHash) {
-		http.Error(w, "Nieprawidłowy nick lub hasło", http.StatusUnauthorized)
+		http.Error(w, "Invalid nickname or password", http.StatusUnauthorized)
 		return
 	}
 
 	roomName := strings.TrimPrefix(r.URL.Path, "/ws/")
 	if roomName == "" {
-		http.Error(w, "Nie podano nazwy pokoju czatu", http.StatusBadRequest)
+		http.Error(w, "Chat room name not provided", http.StatusBadRequest)
 		return
 	}
 
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Println("Błąd uaktualniania do WebSocket:", err)
+		log.Println("Error upgrading to WebSocket:", err)
 		return
 	}
-	log.Printf("Nowe połączenie WebSocket z użytkownikiem %s w pokoju '%s'\n", nickname, roomName)
+	log.Printf("New WebSocket connection from user %s in room '%s'\n", nickname, roomName)
 
 	mu.Lock()
 	if chats[roomName] == nil {
@@ -239,11 +238,11 @@ func handleWebsocket(w http.ResponseWriter, r *http.Request) {
 	chats[roomName][conn] = true
 	mu.Unlock()
 
-	// broadcast wejścia
+	// Broadcast entry message
 	joinMsg := Message{
 		ChatRoom:  roomName,
 		Nickname:  user.Nickname,
-		Content:   fmt.Sprintf("%s dołączył do pokoju", user.Nickname),
+		Content:   fmt.Sprintf("%s has joined the room", user.Nickname),
 		Timestamp: time.Now(),
 		Type:      "system",
 	}
@@ -257,13 +256,13 @@ func handleWebsocket(w http.ResponseWriter, r *http.Request) {
 		}
 		mu.Unlock()
 		conn.Close()
-		log.Printf("Użytkownik %s rozłączony z pokoju '%s'\n", nickname, roomName)
+		log.Printf("User %s disconnected from room '%s'\n", nickname, roomName)
 
-		// broadcast wyjścia
+		// Broadcast exit message
 		leaveMsg := Message{
 			ChatRoom:  roomName,
 			Nickname:  user.Nickname,
-			Content:   fmt.Sprintf("%s opuścił pokój", user.Nickname),
+			Content:   fmt.Sprintf("%s has left the room", user.Nickname),
 			Timestamp: time.Now(),
 			Type:      "system",
 		}
@@ -277,7 +276,7 @@ func handleWebsocket(w http.ResponseWriter, r *http.Request) {
 			if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
 				break
 			}
-			log.Println("Błąd odczytu wiadomości:", err)
+			log.Println("Error reading message:", err)
 			break
 		}
 
@@ -286,21 +285,21 @@ func handleWebsocket(w http.ResponseWriter, r *http.Request) {
 		msg.Timestamp = time.Now()
 		msg.Type = "chat"
 
-		// zapisujemy tylko normalne wiadomości
+		// We only save normal chat messages
 		_, err = db.Exec("INSERT INTO messages (chat_room, user_id, nickname, content) VALUES (?, ?, ?, ?)",
 			msg.ChatRoom, user.ID, msg.Nickname, msg.Content)
 		if err != nil {
-			log.Println("Błąd zapisu wiadomości do bazy:", err)
+			log.Println("Error saving message to the database:", err)
 			continue
 		}
 
-		// Broadcast (rozsyłanie) wiadomości do wszystkich klientów w pokoju
+		// Broadcast the message to all clients in the room
 		broadcastMessage(roomName, msg, conn)
 	}
 }
 
-// broadcastMessage wysyła wiadomość do wszystkich aktywnych połączeń w danym pokoju
-// z wyjątkiem nadawcy (sender)
+// broadcastMessage sends a message to all active connections in a given room,
+// excluding the sender.
 func broadcastMessage(roomName string, msg Message, sender *websocket.Conn) {
 	mu.Lock()
 	defer mu.Unlock()
@@ -309,13 +308,13 @@ func broadcastMessage(roomName string, msg Message, sender *websocket.Conn) {
 		for client := range clients {
 			err := client.WriteJSON(msg)
 			if err != nil {
-				log.Println("Błąd wysyłania wiadomości do klienta:", err)
+				log.Println("Error sending message to client:", err)
 			}
 		}
 	}
 }
 
-// --- Funkcja główna ---
+// --- Main Function ---
 
 func main() {
 	initDB()
@@ -330,6 +329,6 @@ func main() {
 	})
 
 	port := "8080"
-	log.Printf("Serwer czatu uruchomiony na porcie %s\n", port)
+	log.Printf("Chat server started on port %s\n", port)
 	log.Fatal(http.ListenAndServe(":"+port, nil))
 }
