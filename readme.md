@@ -51,7 +51,7 @@ Follow these instructions to get the server up and running on your local machine
 3.  **Run the server:**
 
     ```sh
-    go run ./server/main.go
+    go run ./main.go
     ```
 
     The server will start on port `8080` by default and will create a `chat.db` file in the project root to store data.
