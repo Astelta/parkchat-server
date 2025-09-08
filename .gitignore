@@ -10,6 +10,7 @@
 parkchat-server-linux
 parkchat-server-windows.exe
 chat.db
+main
 
 # Test binary, built with `go test -c`
 *.test
