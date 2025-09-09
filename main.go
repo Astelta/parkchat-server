@@ -143,7 +143,7 @@ func handleHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := db.Query("SELECT nickname, content, timestamp FROM messages WHERE chat_room = ? ORDER BY timestamp ASC LIMIT 50", roomName)
+	rows, err := db.Query("SELECT nickname, content, timestamp FROM messages WHERE chat_room = ? ORDER BY timestamp DESC LIMIT 50", roomName)
 	if err != nil {
 		http.Error(w, "Error fetching message history", http.StatusInternalServerError)
 		return
@@ -151,13 +151,18 @@ func handleHistory(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 
 	var messages []Message
+	var temp []Message
 	for rows.Next() {
 		var msg Message
 		if err := rows.Scan(&msg.Nickname, &msg.Content, &msg.Timestamp); err != nil {
 			http.Error(w, "Error reading message", http.StatusInternalServerError)
 			return
 		}
-		messages = append(messages, msg)
+		temp = append(temp, msg)
+	}
+
+	for i := len(temp) - 1; i >= 0; i-- {
+		messages = append(messages, temp[i])
 	}
 
 	w.Header().Set("Content-Type", "application/json")
